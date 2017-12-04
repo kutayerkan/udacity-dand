@@ -1,0 +1,352 @@
+White Wine Quality by Kutay Erkan
+========================================================
+
+```{r echo=FALSE, message=FALSE, warning=FALSE, packages}
+# Load all of the packages that you end up using in your analysis in this code
+# chunk.
+
+# Notice that the parameter "echo" was set to FALSE for this code chunk. This
+# prevents the code from displaying in the knitted HTML output. You should set
+# echo=FALSE for all code chunks in your file, unless it makes sense for your
+# report to show the code that generated a particular plot.
+
+# The other parameters for "message" and "warning" should also be set to FALSE
+# for other code chunks once you have verified that each plot comes out as you
+# want it to. This will clean up the flow of your report.
+
+library(tidyverse)
+library(rmarkdown)
+library(knitr)
+library(reshape2)
+library(psych)
+library(scales)
+library(RColorBrewer)
+```
+
+```{r echo=FALSE, message=FALSE, warning=FALSE, Load_the_Data}
+# Load the Data
+raw = read.csv("wineQualityWhites.csv")
+```
+
+In this report, we will try to explore a dataset with approximately 4900 
+observations about the attributes of white wine and its perceived quality.
+
+# Univariate Plots Section
+
+In our dataset, we have 4898 observations and 13 columns. 
+
+```{r echo=FALSE, message=FALSE, warning=FALSE, Summary}
+str(raw)
+summary(raw)
+```
+
+Our initial observations are:
+
+* There are 4898 observations and 13 variables.
+* Quality and X are integer variables.
+* Quality is the variable we will focus on the most. It is an integer (discrete) 
+and categorical variable with values between 3 and 9. Its mean is 5.878 and 
+median is 6.
+* X seems to be a numerical Unique Identifier Variable, as difference between 
+consecutive variables is always 1.
+
+
+```{r message=FALSE, warning=FALSE, Check_UID}
+all(diff(raw$x) == 1)
+```
+we also check to see if there are any non-positive values in our dataframe: 
+
+```{r message=FALSE, warning=FALSE, Check_Positivity}
+colSums(raw == 0)
+colSums(raw < 0)
+```
+We see that only citric.acid contains 19 zero values. It is curious if this is 
+because it is not reported or those observations really contained zero values, 
+and we will keep this in mind.
+
+We will draw quick histograms for all variables to get a general idea of the 
+variables, using X as the unique id. We'll free the x axis so that histograms 
+of different variables become meaningful.
+
+```{r echo=FALSE, message=FALSE, warning=FALSE, class_remover}
+#raw = subset(raw, select = -class -acidity)
+#used if it is needed to remove the added features
+```
+
+```{r echo=FALSE, message=FALSE, warning=FALSE, Univariate_Plots}
+melt_raw = melt(raw, id.vars = "X")
+ggplot(melt_raw, aes(x = value)) + 
+    facet_wrap(~variable, scales = "free_x") + 
+    geom_histogram()
+```
+
+From now on we don't need X as a unique id in the melted histograms above, so 
+we can set it to NULL.
+
+```{r message=FALSE, warning=FALSE, Sex_X_Null}
+raw$X = NULL
+```
+
+We also see that as quality is a discrete variable, it can be better shown is the 
+following way with geom_bar (we once again see that minimum quality is 3 and 
+maximum is 9):
+
+```{r echo=FALSE, message=FALSE, warning=FALSE, Quality_Plot}
+ggplot(raw, aes(x = quality)) + 
+  geom_bar() +
+  scale_x_discrete(limits=0:10)
+```
+
+# Univariate Analysis
+### Transformations
+When we look at our histograms, we see that following variables seem skewed:
+* fixed.acidity
+* volatile.acidity
+* citric.acid
+* free.sulfur.dioxide
+* total.sulfur.dioxide
+* sulphates
+* alcohol
+
+When we research it, we learn that pH scale is approximately base 10 logarithm 
+of hydrogen ions in a solution. Considering this fact and the tails, we will
+transform *.acidity variables using base 10 logarithm.
+```{r echo=FALSE, message=FALSE, warning=FALSE, Log_Transforms}
+ggplot(data = raw,
+       aes(x = fixed.acidity)) +
+  geom_histogram() +
+  scale_x_log10()
+
+ggplot(data = raw,
+       aes(x = volatile.acidity)) +
+  geom_histogram() +
+  scale_x_log10()
+
+ggplot(data = raw,
+       aes(x = citric.acid)) +
+  geom_histogram() +
+  scale_x_log10()
+```
+
+We get very normal distributions except for the tail of citric.acid, containing 
+values lower than 0.1 g/dm^3.
+
+### Outliers
+
+We use boxplots with an alpha value of 0.05 to see possible outliers in each of 
+our datasets.
+
+```{r echo=FALSE, message=FALSE, warning=FALSE, Boxplot_Outliers}
+ggplot(data = melt_raw, aes(x = variable, y = value)) +
+  geom_boxplot(aes(fill = X), outlier.alpha = 0.05) +
+  facet_wrap( ~ variable, scales = "free")
+```
+
+### New (Created) Features
+As quality variable is basically a measure of how good or bad a wine is, it is 
+logical to convert it to a categorical variable. For this purpose we create a 
+new variable called "class". We can use class to separately inspect what is 
+happening feature-wise in different types of wine (bad, good etc.).
+
+While separating quality levels to create a "class" variable, at first I thought
+using 3 classes; "bad", "good", and "average". But I decided against it as 
+bundling quality levels 5 and 6 together would cause a huge fraction of data 
+points to be in the same class. Thus it is decided to use four levels: A, B, C 
+and D. Grouping can be seen below:
+
+|   Quality   | Class |
+|:-----------:|:-----:|
+| 7, 8, 9, 10 |   A   |
+|      6      |   B   |
+|      5      |   C   |
+|  1, 2, 3, 4 |   D   |
+
+```{r echo=FALSE, message=FALSE, warning=FALSE, Categorize_Quality}
+raw$class = cut(raw$quality, 
+                          c(0.0,4.5,5.5,6.5,10.0),
+                          labels=c('D','C','B', 'A'))
+```
+
+We already have a variable for pH, but when we already have 3 variables for 
+acidity, we can assign a separate variable for acidity and use it as a feature.
+
+Looking in the documentation, unit for all acidity variables are g/dm^3, so we 
+can directly sum them.
+
+```{r echo=FALSE, message=FALSE, warning=FALSE, Create_Acidity}
+raw$acidity = raw$fixed.acidity + raw$volatile.acidity + raw$citric.acid
+```
+
+# Bivariate Plots Section
+
+To get a quick snapshot of relationships between all the fatures, we look at 
+their plot and correlation matrices:
+
+```{r echo=FALSE, message=FALSE, warning=FALSE, Bivariate_Plots}
+pairs.panels(subset(raw, select = -class))
+```
+
+
+When we look at the relationship between quality and other features, there is a 
+strong relationship between quality and alcohol. Density is correlated with 
+alcohol (inversely) and residual sugar, which is not surprising. We also see
+that quality is correlated with chlorides (salt), volatile acidity, and total 
+sulfur dioxide; all of which will be examined further.
+
+When we use jitter and transparency on the points we see alcohol has a 
+significant positive effect on the quality.
+
+```{r echo=FALSE, message=FALSE, warning=FALSE, Bivariate_Plots_2}
+ggplot(aes(x = alcohol, y = quality), data = raw) +
+  geom_jitter(alpha = 0.3, width = 0.3, color="orange")
+```
+
+
+While chlorides don't seem to "break" a wine in lower amounts, the fact that 
+there is no wine with a quality of 6 or bigger when chloride (salt) amount is 
+bigger than 0.2 g/dm^3 might indicate higher amounts of salt affects quality 
+perception. Indeed, top notch wines (quality of 9) have lower than 0.05 g/dm^3.
+
+```{r echo=FALSE, message=FALSE, warning=FALSE, Bivariate_Plots_3}
+ggplot(aes(x = chlorides, y = quality), data = raw) +
+  geom_jitter(height = 0.1, color="orange")
+```
+
+Effect of volatile acidity on quality is not exactly clear, and should be 
+further investigated later on.
+
+```{r echo=FALSE, message=FALSE, warning=FALSE, Bivariate_Plots_4}
+ggplot(aes(x = volatile.acidity, y = quality), data = raw) +
+  geom_jitter(height = 0.1, color="orange") +
+  scale_x_log10()
+#  scale_x_continuous(lim = 0, quantile(raw$volatile.acidity, 0.95)))
+```
+
+Even though we remove outliers of bottom and top by 5%, there's no significant 
+change on quality created by different sulfur dioxide amounts.
+
+```{r echo=FALSE, message=FALSE, warning=FALSE, Bivariate_Plots_5}
+ggplot(aes(x = total.sulfur.dioxide, y = quality), data = raw) +
+  geom_jitter(height = 0.1, color="orange") +
+  scale_x_continuous(lim = c(quantile(raw$total.sulfur.dioxide, 0.05),
+                             quantile(raw$total.sulfur.dioxide, 0.95)))
+```
+
+# Bivariate Analysis
+
+Other than obvious relationships between the ones like sulfur.dioxides or 
+acidities; strongest relationships are between density - alcohol, 
+density - residual sugar, and quality - alcohol. It is also interesting that 
+fixed acidity has a 0.99 correlation with acidity, suggesting fixed acids are 
+in much higher concentrations in the wines.
+
+# Multivariate Plots Section
+
+we use the classes we created to differentiate points, and apply upper 95% 
+quantile on chlorides.
+
+```{r echo=FALSE, message=FALSE, warning=FALSE, Multivariate_Plots}
+ggplot(data = raw, aes(x = alcohol, y = chlorides,
+           color = class)) +
+  geom_point() +
+  scale_color_brewer(type = 'seq', palette = 5,
+    guide = guide_legend(title = 'Class', reverse = T,
+    override.aes = list(alpha = 1, size = 2))) +
+  scale_y_continuous(limits = c(0, quantile(raw$chlorides, 0.95)))
+```
+
+We see in the documentation that "volatile acidity" is acetic acid. If a wine has
+both low alcohol and high acetic acid, it tends to have worse quality.
+
+```{r echo=FALSE, message=FALSE, warning=FALSE, Multivariate_Plots_2}
+ggplot(data = raw, aes(x = alcohol, y = volatile.acidity,
+           color = class)) +
+  geom_point() +
+  scale_color_brewer(type = 'seq', palette = 5,
+    guide = guide_legend(title = 'Class', reverse = T,
+    override.aes = list(alpha = 1, size = 2))) +
+  scale_y_continuous(trans = log10_trans())
+```
+
+```{r echo=FALSE, message=FALSE, warning=FALSE, Multivariate_Plots_3}
+ggplot(data = raw, aes(x = alcohol, y = total.sulfur.dioxide,
+           color = class)) +
+  geom_point(alpha = 0.5) +
+  scale_color_brewer(type = 'seq', palette = 5,
+    guide = guide_legend(title = 'Class', reverse = T,
+    override.aes = list(alpha = 1, size = 2))) +
+  scale_y_continuous(limits = c(0, quantile(raw$total.sulfur.dioxide, 0.95)))
+```
+
+# Multivariate Analysis
+
+We see that alcohol is indeed very important in the perceived quality of a wine.
+Having a high salt concentration affects it badly, and other chemicals such as 
+volatile acids and sulfur dioxide shouldn't be higher than a certain amount.
+
+
+### Plot One
+```{r echo=FALSE, message=FALSE, warning=FALSE, Plot_One}
+ggplot(aes(x=alcohol, y=quality),data=raw) +
+  geom_jitter(alpha = 0.3, width = 0.4, color="orange") +
+  geom_smooth(method = lm) +
+  labs(x = "Alcohol (% by Volume)", y = "Quality") +
+  ggtitle('White Wine Quality by Alcohol')
+```
+
+### Description One
+
+This is the first clear indicator we have regarding the relationship between 
+alcohol content and perceived quality of a white wine.
+
+### Plot Two
+```{r echo=FALSE, message=FALSE, warning=FALSE, Plot_Two}
+ggplot(data = raw, aes(x = alcohol, y = chlorides,
+           color = class)) +
+  geom_point(alpha = 1, size = 1.5, position = 'jitter') +
+  scale_color_brewer(type = 'seq', palette = 5,
+    guide = guide_legend(title = 'Class', reverse = T,
+    override.aes = list(alpha = 1, size = 2))) +
+  scale_y_continuous(limits = c(0, quantile(raw$chlorides, 0.95))) +
+  labs(x = "Alcohol (% by Volume)",
+       y = "Chlorides (sodium chloride - g / dm^3)") +
+  ggtitle('White Wine Quality by Alcohol and Chloride')
+```
+
+### Description Two
+
+We see that Class A and B wines mostly reside in the lower right corner while 
+lower quality wines are generally in upper left corner. In addition to alcohol, 
+we see that high amount of salt might affect a wine's quality badly.
+
+### Plot Three
+```{r echo=FALSE, message=FALSE, warning=FALSE, Plot_Three}
+ggplot(data = raw, aes(x = alcohol, y = volatile.acidity,
+           color = class)) +
+  geom_point(alpha = 1, size = 1.5, position = 'jitter') +
+  scale_color_brewer(type = 'seq', palette = 5,
+    guide = guide_legend(title = 'Class', reverse = T,
+    override.aes = list(alpha = 1, size = 2))) +
+  scale_y_continuous(trans = log10_trans()) +
+  labs(x = "Alcohol (% by Volume)",
+       y = "log10 of Acetic Acid (g / dm^3)") +
+  ggtitle('White Wine Quality by Alcohol and log10 Trans. of Acetic Acid')
+```
+
+### Description Three
+
+Finally, we also see acetic acid affecting the quality of a wine in addition to 
+alcohol. Note the log10 transformation, used as volatile.acidity variable a 
+form close to normal when transformed, and it is naturally a logarithmic 
+variable.
+
+# Reflection
+
+Main struggle for me was having an integer variable (quality) to investigate 
+other features' effects on. It required more technical additions, like 
+converting it to a ordinal variable. Also not having much of an intutition 
+regarding which material(s) make a wine better prompted me to make extra 
+research. Seeing how alcohol played a part in wine quality also surprised me. A 
+point going forward could be using a mathematical model to test if the 
+mentioned relationships are there, and can such models predict "quality" of a 
+wine without no one testing it.
